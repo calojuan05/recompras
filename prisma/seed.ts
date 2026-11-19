@@ -109,6 +109,22 @@ async function sembrarDemo() {
   await prisma.customer.deleteMany({ where: { origen: 'demo' } });
 
   const clientes = [];
+  clientes.push(
+    await prisma.customer.create({
+      data: {
+        externalId: 'DEMO-CONTACTO',
+        nombreCompleto: 'Juan Camilo Villamizar',
+        telefono: '+573042360209',
+        email: null,
+        ciudad: 'Bogotá',
+        canalPreferido: 'whatsapp',
+        consentimientoMarketing: true,
+        fechaAlta: aDate(sumarDias(hoy, -120)),
+        ultimaInteraccionAt: aDate(sumarDias(hoy, -10)),
+        origen: 'demo',
+      },
+    }),
+  );
   for (let i = 0; i < 50; i++) {
     const nombre = `${elegir(NOMBRES)} ${elegir(APELLIDOS)} ${elegir(APELLIDOS)}`;
     const telefono = `+5730${entre(10, 99)}${entre(100000, 999999)}`;
