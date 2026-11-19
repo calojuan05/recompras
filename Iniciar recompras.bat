@@ -1,10 +1,17 @@
 @echo off
 title recompras
 cd /d "%~dp0"
+set "RUTA=%~dp0"
+set "RUTA=%RUTA:\=/%"
 
 if not exist node_modules (
   echo Instalando dependencias, solo la primera vez...
   call npm install || goto error
+)
+
+if not exist .env (
+  echo Creando .env con la base de datos de esta carpeta...
+  powershell -NoProfile -Command "(Get-Content .env.example) -replace '^DATABASE_URL=.*', 'DATABASE_URL=file:%RUTA%dev.db' | Set-Content .env" || goto error
 )
 
 if not exist dev.db (
