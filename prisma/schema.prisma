@@ -1,0 +1,268 @@
+// Esquema de la plataforma de recompras programadas.
+//
+// Motor por defecto: SQLite (un archivo, cero dependencias). Para pasar a
+// PostgreSQL: `npm run db:postgres` cambia el provider y luego se migra.
+//
+// SQLite no soporta enums ni Json en Prisma: los campos de estado van como
+// String con el conjunto de valores documentado al lado, y los payloads de
+// auditoría como String con JSON serializado.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// Cliente final. Para los que llegan de Lucid Bot, `externalId` es el
+/// contact_id, que en esa plataforma es el teléfono en formato internacional.
+model Customer {
+  id                      String    @id @default(cuid())
+  externalId              String?   @unique
+  nombreCompleto          String
+  email                   String?
+  telefono                String?
+  ciudad                  String?
+  canalPreferido          String    @default("whatsapp") // whatsapp | email | sms | panel
+  consentimientoMarketing Boolean   @default(false)
+  fechaAlta               DateTime  @default(now())
+  /// Última vez que el cliente escribió. Manda la ventana de 24 h de WhatsApp.
+  ultimaInteraccionAt     DateTime?
+  activo                  Boolean   @default(true)
+  origen                  String    @default("manual") // manual | api | import
+  creadoEn                DateTime  @default(now())
+  actualizadoEn           DateTime  @updatedAt
+
+  compras  Purchase[]
+  perfiles ConsumptionProfile[]
+  ciclos   RepurchaseCycle[]
+
+  @@index([nombreCompleto])
+  @@index([activo])
+}
+
+/// Presentación vendible. La duración se deriva de las unidades del envase y
+/// la dosis diaria; `unidadMedida` existe porque el catálogo mezcla cápsulas,
+/// gramos (colágeno en polvo) y mililitros.
+model Product {
+  id                   String   @id @default(cuid())
+  nombre               String   @unique
+  sku                  String?  @unique
+  presentacion         String   @default("")
+  unidadMedida         String   @default("capsulas") // capsulas | gramos | ml | sobres
+  unidadesPorFrasco    Float
+  dosisDiariaSugerida  Float
+  /// Derivado: floor(unidadesPorFrasco / dosisDiariaSugerida). Se recalcula al guardar.
+  duracionEstimadaDias Int
+  /// Si es null se usa el valor global de Configuración.
+  diasDeAnticipacion   Int?
+  precio               Float    @default(0)
+  activo               Boolean  @default(true)
+  creadoEn             DateTime @default(now())
+  actualizadoEn        DateTime @updatedAt
+
+  alias    ProductAlias[]
+  escalas  PriceScale[]
+  compras  Purchase[]
+  perfiles ConsumptionProfile[]
+  ciclos   RepurchaseCycle[]
+}
+
+/// Los títulos que llegan del bot varían mucho ("NEOCEL INVIMA X 500 GRAMOS",
+/// "Collagen Neocell Con Invima 500 Gr"...). Cada alias mapea un patrón a un producto.
+model ProductAlias {
+  id        String  @id @default(cuid())
+  productId String
+  patron    String  @unique // se compara en mayúsculas y sin tildes
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+/// El título del pedido miente sobre las cantidades; el `value` no. Esta tabla
+/// traduce el valor total del pedido a unidades reales.
+model PriceScale {
+  id        String  @id @default(cuid())
+  productId String
+  valor     Int
+  unidades  Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, valor])
+}
+
+/// Una compra ya en manos del cliente. En contraentrega `fechaCompra` es la
+/// fecha de ENTREGA: es cuando empieza el consumo, no cuando se hizo el pedido.
+model Purchase {
+  id               String    @id @default(cuid())
+  externalId       String?   @unique // id de la opportunity en Lucid Bot
+  customerId       String
+  productId        String?
+  cantidadFrascos  Int       @default(1)
+  fechaCompra      DateTime
+  fechaPedido      DateTime?
+  canalVenta       String    @default("whatsapp")
+  precioUnitario   Float     @default(0)
+  valorTotal       Float     @default(0)
+  origen           String    @default("manual") // manual | api | import
+  estadoEntrega    String    @default("entregado") // entregado | transito | devuelto
+  tituloCrudo      String?
+  /// Pedidos sin título o sin producto reconocible: no se estima a ciegas.
+  requiereRevision Boolean   @default(false)
+  motivoRevision   String?
+  /// customerId|productId|fechaCompra: hace idempotente la ingesta.
+  claveNatural     String    @unique
+  creadoEn         DateTime  @default(now())
+  actualizadoEn    DateTime  @updatedAt
+
+  customer Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product  Product?         @relation(fields: [productId], references: [id])
+  ciclo    RepurchaseCycle?
+
+  @@index([customerId])
+  @@index([productId])
+  @@index([fechaCompra])
+}
+
+/// Ajuste fino del consumo de un cliente para un producto concreto.
+model ConsumptionProfile {
+  id              String   @id @default(cuid())
+  customerId      String
+  productId       String
+  dosisDiariaReal Float?
+  /// Calculado con la mediana de intervalos reales; acotado a [0.6, 1.6].
+  factorAjuste    Float    @default(1.0)
+  notas           String?
+  actualizadoEn   DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, productId])
+}
+
+/// El corazón del sistema: un ciclo por compra.
+model RepurchaseCycle {
+  id                       String    @id @default(cuid())
+  customerId               String
+  productId                String
+  purchaseId               String    @unique
+  fechaInicio              DateTime
+  fechaAgotamientoEstimada DateTime
+  fechaRecompraSugerida    DateTime
+  diasDeAnticipacion       Int       @default(7)
+  /// PROGRAMADO | POR_VENCER | VENCIDO | RECOMPRADO | PAUSADO | CANCELADO
+  estado                   String    @default("PROGRAMADO")
+  intentosContacto         Int       @default(0)
+  ultimoContactoAt         DateTime?
+  convertidoAt             DateTime?
+  /// Factor con el que se calcularon las fechas, para poder auditarlas después.
+  factorAjusteAplicado     Float     @default(1.0)
+  notas                    String?
+  creadoEn                 DateTime  @default(now())
+  actualizadoEn            DateTime  @updatedAt
+
+  customer       Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product        Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  purchase       Purchase             @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  notificaciones NotificationOutbox[]
+
+  @@index([estado])
+  @@index([fechaRecompraSugerida])
+  @@index([customerId])
+}
+
+/// Bandeja de salida. En modo simulado el mensaje se guarda aquí y no sale a
+/// ningún proveedor: es la protección más barata contra escribirle a un cliente real.
+model NotificationOutbox {
+  id             String    @id @default(cuid())
+  cycleId        String
+  canal          String // whatsapp | email | sms | panel
+  plantilla      String
+  destinatario   String
+  cuerpo         String
+  /// PENDIENTE | SIMULADO | ENVIADO | FALLIDO | CANCELADO
+  estado         String    @default("PENDIENTE")
+  programadoPara DateTime
+  enviadoAt      DateTime?
+  error          String?
+  creadoEn       DateTime  @default(now())
+
+  cycle RepurchaseCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+
+  @@index([estado])
+  @@index([cycleId])
+}
+
+/// Plantilla editable. Variables: nombre, producto, dias_restantes, link_recompra.
+model MessageTemplate {
+  id            String   @id @default(cuid())
+  nombre        String   @unique
+  canal         String   @default("whatsapp")
+  asunto        String?
+  cuerpo        String
+  activo        Boolean  @default(true)
+  actualizadoEn DateTime @updatedAt
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  entidad        String
+  entidadId      String
+  accion         String
+  payloadAntes   String? // JSON serializado (SQLite no tiene tipo Json)
+  payloadDespues String?
+  actor          String   @default("sistema")
+  creadoEn       DateTime @default(now())
+
+  @@index([entidad, entidadId])
+  @@index([creadoEn])
+}
+
+/// Configuración global editable desde el panel.
+model Setting {
+  clave         String   @id
+  valor         String
+  actualizadoEn DateTime @updatedAt
+}
+
+/// Envío vigilado a destino lento (San Andrés y Providencia).
+///
+/// Existe porque el 13 % de los pedidos se devuelve, y en las islas el
+/// transportador tarda tanto que el cliente se cansa, no reclama y el paquete
+/// se regresa. La idea es avisar antes de que eso pase.
+///
+/// El reloj es nuestro, no de Lucid Bot: su API solo guarda cuándo cambió el
+/// pedido por última vez, así que al pasar de "Guía generada" a "En reparto"
+/// esa fecha se pisa y se pierde el origen. `guiaGeneradaAt` se escribe una
+/// sola vez, la primera vez que vemos el pedido, y ya no se toca.
+model EnvioVigilado {
+  id             String    @id @default(cuid())
+  /// Id de la oportunidad en Lucid Bot. Llave de idempotencia.
+  idExterno      String    @unique
+  contactoId     String
+  nombre         String
+  telefono       String?
+  departamento   String
+  ciudad         String?
+  direccion      String?
+  producto       String?
+  valor          Float     @default(0)
+  /// Nombre de la etapa tal como viene del pipeline.
+  etapa          String
+  /// Cuándo empezó a contar. No se sobrescribe nunca.
+  guiaGeneradaAt DateTime
+  entregadoAt    DateTime?
+  devueltoAt     DateTime?
+  /// Última vez que se comprobó la etapa contra Lucid Bot.
+  revisadoAt     DateTime  @default(now())
+  /// Cuándo se avisó, para no repetir el aviso todos los días.
+  alertadoAt     DateTime?
+  creadoEn       DateTime  @default(now())
+  actualizadoEn  DateTime  @updatedAt
+
+  @@index([etapa])
+  @@index([guiaGeneradaAt])
+}

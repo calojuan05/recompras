@@ -1,0 +1,5 @@
+externalId,clienteExternalId,nombreCliente,telefono,email,ciudad,titulo,valor,fechaPedido,fechaEntrega,estadoEntrega
+1001,573001112233,Ana Restrepo,+573001112233,,Medellín,1 x COLAGENO NEOCELL X 500 GRS,74900,2026-06-01,2026-06-04,entregado
+1002,573001112233,Ana Restrepo,+573001112233,,Medellín,2 x COLAGENO NEOCELL X 500 GRS,114900,2026-07-20,2026-07-24,entregado
+1003,573004445566,Jorge Ospina,+573004445566,,Cali,1 x BERBERINA X 100 CAPS,89900,2026-07-02,2026-07-06,entregado
+1004,573004445566,Jorge Ospina,+573004445566,,Cali,1 x BERBERINA X 100 CAPS,89900,2026-08-10,,transito

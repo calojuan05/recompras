@@ -1,0 +1,39 @@
+{
+  "_comentario": "Ejemplo de mapeo para RestApiAdapter. Va en la variable REST_API_MAPEO del .env, en una sola línea. Las rutas de campo aceptan puntos para bajar por el JSON del proveedor: 'stage.name', 'cliente.telefono'.",
+
+  "clientes": {
+    "ruta": "/customers",
+    "lista": "data",
+    "paginacion": { "parametroLimite": "limit", "parametroOffset": "offset", "tamano": 100 },
+    "campos": {
+      "externalId": "id",
+      "nombreCompleto": "full_name",
+      "email": "email",
+      "telefono": "phone",
+      "ciudad": "address.city",
+      "canalPreferido": "preferred_channel",
+      "consentimientoMarketing": "marketing_opt_in",
+      "fechaAlta": "created_at"
+    }
+  },
+
+  "compras": {
+    "ruta": "/orders",
+    "lista": "data",
+    "paginacion": { "parametroLimite": "limit", "parametroOffset": "offset", "tamano": 100 },
+    "estados": {
+      "entregado": ["delivered", "Entregados"],
+      "devuelto": ["returned", "Devueltos"]
+    },
+    "campos": {
+      "externalId": "id",
+      "clienteExternalId": "customer_id",
+      "titulo": "line_items_summary",
+      "valor": "total",
+      "fechaPedido": "created_at",
+      "fechaEntrega": "delivered_at",
+      "estadoEntrega": "status",
+      "canalVenta": "channel"
+    }
+  }
+}
